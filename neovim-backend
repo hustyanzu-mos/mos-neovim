@@ -51,7 +51,9 @@ cmd_prepare() {
 cmd_status() {
   local installed=false version config_exists=false
 
-  neovim_prepare
+  neovim_resolve_paths
+  neovim_migrate_config
+  neovim_ensure_paths
 
   if [ -f "$NEOVIM_CONFIG_ROOT/nvim/init.lua" ] || [ -f "$NEOVIM_CONFIG_ROOT/nvim/init.vim" ]; then
     config_exists=true

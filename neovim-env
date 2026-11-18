@@ -96,9 +96,14 @@ neovim_migrate_data() {
   cp -a "$old/." "$NEOVIM_DATA_ROOT/" 2>/dev/null || true
 }
 
+neovim_ensure_paths() {
+  neovim_resolve_paths
+  mkdir -p "$NEOVIM_CONFIG_ROOT/nvim" "$NEOVIM_DATA_ROOT" "$NEOVIM_STATE_ROOT" "$NEOVIM_CACHE_ROOT" 2>/dev/null || true
+}
+
 neovim_prepare() {
   neovim_resolve_paths
   neovim_migrate_config
   neovim_migrate_data
-  mkdir -p "$NEOVIM_CONFIG_ROOT/nvim" "$NEOVIM_DATA_ROOT" "$NEOVIM_STATE_ROOT" "$NEOVIM_CACHE_ROOT" 2>/dev/null || true
+  neovim_ensure_paths
 }

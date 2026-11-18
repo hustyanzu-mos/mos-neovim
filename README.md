@@ -83,21 +83,21 @@ mos-neovim/
 本地（当前架构）：
 
 ```bash
-./build.sh 0.2.1
+./build.sh 0.2.2
 ```
 
 输出：
 
 ```text
-build/neovim-0.2.1-1+mos-plugin_amd64.deb
-build/neovim-0.2.1-1+mos-plugin_amd64.deb.md5
+build/neovim-0.2.2-1+mos-plugin_amd64.deb
+build/neovim-0.2.2-1+mos-plugin_amd64.deb.md5
 ```
 
 GitHub Actions 会同时构建：
 
 ```text
-neovim-0.2.1-1+mos-plugin_amd64.deb
-neovim-0.2.1-1+mos-plugin_arm64.deb
+neovim-0.2.2-1+mos-plugin_amd64.deb
+neovim-0.2.2-1+mos-plugin_arm64.deb
 ```
 
 Hub 会根据机器架构选择对应的 `.deb`。
@@ -107,8 +107,8 @@ Hub 会根据机器架构选择对应的 `.deb`。
 ## 发布与安装
 
 ```bash
-git tag 0.2.1
-git push origin 0.2.1
+git tag 0.2.2
+git push origin 0.2.2
 ```
 
 在 MOS 添加索引仓库：
