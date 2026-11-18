@@ -1,0 +1,30 @@
+#!/bin/sh
+# Neovim wrapper for MOS.
+# Keeps config, data, state and cache under the persistent plugin directory.
+# /usr/lib/neovim is a RAM copy of the official release tree, so /boot can be noexec.
+
+PLG_DIR="${NEOVIM_PLUGIN_DIR:-/boot/optional/plugins/neovim}"
+LIB_DIR="${NEOVIM_USR_LIB_DIR:-/usr/lib/neovim}"
+
+if [ -x "$LIB_DIR/bin/nvim" ]; then
+  NVIM="$LIB_DIR/bin/nvim"
+  VIMRUNTIME="$LIB_DIR/share/nvim/runtime"
+else
+  NVIM="$PLG_DIR/nvim/bin/nvim"
+  VIMRUNTIME="$PLG_DIR/nvim/share/nvim/runtime"
+fi
+
+if [ ! -x "$NVIM" ]; then
+  echo "Neovim is not installed yet. Open the Neovim plugin in MOS and click Install." >&2
+  exit 127
+fi
+
+export XDG_CONFIG_HOME="$PLG_DIR/config"
+export XDG_DATA_HOME="$PLG_DIR/data"
+export XDG_STATE_HOME="$PLG_DIR/state"
+export XDG_CACHE_HOME="$PLG_DIR/cache"
+export VIMRUNTIME
+
+mkdir -p "$XDG_CONFIG_HOME/nvim" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME" 2>/dev/null || true
+
+exec "$NVIM" "$@"

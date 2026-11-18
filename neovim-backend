@@ -1,0 +1,311 @@
+#!/bin/bash
+# Neovim backend for MOS.
+# Called through POST /api/v1/mos/plugins/query with command "neovim".
+#
+# Persistent layout:
+#   /boot/optional/plugins/neovim/
+#     nvim/               official release tree (bin/, lib/, share/)
+#     config/nvim/        XDG_CONFIG_HOME (init.lua)
+#     data/ state/ cache/ XDG dirs
+#     settings.json
+# Runtime tree is copied to /usr/lib/neovim so /boot can stay noexec.
+
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+umask 022
+
+PLG_DIR="${NEOVIM_PLUGIN_DIR:-/boot/optional/plugins/neovim}"
+PKG_DIR="$PLG_DIR/nvim"
+SETTINGS="$PLG_DIR/settings.json"
+USR_BIN_DIR="${NEOVIM_USR_BIN_DIR:-/usr/bin}"
+USR_LIB_DIR="${NEOVIM_USR_LIB_DIR:-/usr/lib/neovim}"
+SHARE_DIR="${NEOVIM_SHARE_DIR:-/usr/share/neovim-plugin}"
+GH_REPO="neovim/neovim"
+
+export XDG_CONFIG_HOME="$PLG_DIR/config"
+export XDG_DATA_HOME="$PLG_DIR/data"
+export XDG_STATE_HOME="$PLG_DIR/state"
+export XDG_CACHE_HOME="$PLG_DIR/cache"
+
+mkdir -p "$PLG_DIR" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME" 2>/dev/null
+
+fail() { echo "Error: $*" >&2; exit 1; }
+say() { echo "$*"; }
+
+write_default_settings() {
+  cat > "$SETTINGS" <<'JSON'
+{
+  "auto_install": true,
+  "pin_version": "",
+  "version": ""
+}
+JSON
+}
+
+ensure_settings() {
+  mkdir -p "$PLG_DIR"
+  if [ -f "$SETTINGS" ] && ! jq empty "$SETTINGS" >/dev/null 2>&1; then
+    cp -f "$SETTINGS" "$SETTINGS.bak.$(date +%s)" 2>/dev/null || true
+    rm -f "$SETTINGS"
+  fi
+  if [ ! -f "$SETTINGS" ]; then
+    if [ -f "$SHARE_DIR/settings.json" ]; then
+      cp -f "$SHARE_DIR/settings.json" "$SETTINGS"
+    else
+      write_default_settings
+    fi
+  fi
+}
+
+setting() {
+  jq -r --arg k "$1" '.[$k] // empty' "$SETTINGS" 2>/dev/null
+}
+
+set_setting() {
+  local key="$1" value="$2" tmp
+  ensure_settings
+  tmp="$(mktemp)" || return 1
+  if jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$SETTINGS" > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$SETTINGS"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+init_token() {
+  GH_AUTH="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+  if [ -z "$GH_AUTH" ] && [ -r /boot/config/system/tokens.json ] && command -v jq >/dev/null 2>&1; then
+    local enc
+    enc="$(jq -r '.github // empty' /boot/config/system/tokens.json 2>/dev/null)"
+    if [ -n "$enc" ] && [ -f /usr/local/lib/functions/mos-common ]; then
+      # shellcheck disable=SC1091
+      . /usr/local/lib/functions/mos-common
+      GH_AUTH="$(decrypt_password "$enc" "tokens" 2>/dev/null || true)"
+    fi
+  fi
+}
+
+gh_get() {
+  if [ -n "${GH_AUTH:-}" ]; then
+    curl -fsSL --connect-timeout 15 --retry 2 \
+      -H "Authorization: Bearer $GH_AUTH" \
+      -H "Accept: application/vnd.github+json" "$1"
+  else
+    curl -fsSL --connect-timeout 15 --retry 2 \
+      -H "Accept: application/vnd.github+json" "$1"
+  fi
+}
+
+old_version() {
+  if [ -x "$PKG_DIR/bin/nvim" ]; then
+    "$PKG_DIR/bin/nvim" --version 2>/dev/null | head -n1 | awk '{print $2}' | sed 's/^v//'
+  else
+    setting version
+  fi
+}
+
+current_version() {
+  local v
+  v="$(old_version)"
+  if [ -n "$v" ]; then
+    echo "$v"
+  else
+    setting version
+  fi
+}
+
+asset_name() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo "nvim-linux-x86_64.tar.gz" ;;
+    aarch64|arm64) echo "nvim-linux-arm64.tar.gz" ;;
+    *) return 1 ;;
+  esac
+}
+
+can_write_usr() {
+  [ "${NEOVIM_SKIP_LINKS:-0}" = "1" ] && return 1
+  [ -w "$USR_BIN_DIR" ] || return 1
+  [ -w "$(dirname "$USR_LIB_DIR")" ] || return 1
+  return 0
+}
+
+ensure_runtime_files() {
+  mkdir -p "$PLG_DIR" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME" 2>/dev/null
+
+  if can_write_usr; then
+    mkdir -p "$USR_BIN_DIR/plugins" 2>/dev/null
+
+    if [ ! -x "$USR_BIN_DIR/plugins/neovim" ]; then
+      if [ -f "$PLG_DIR/neovim-backend" ]; then
+        cp -f "$PLG_DIR/neovim-backend" "$USR_BIN_DIR/plugins/neovim"
+      elif [ -f "$SHARE_DIR/neovim-backend" ]; then
+        cp -f "$SHARE_DIR/neovim-backend" "$USR_BIN_DIR/plugins/neovim"
+      fi
+      chmod 0755 "$USR_BIN_DIR/plugins/neovim" 2>/dev/null || true
+    fi
+
+    if [ ! -x "$USR_BIN_DIR/nvim" ]; then
+      if [ -f "$PLG_DIR/neovim-wrapper" ]; then
+        cp -f "$PLG_DIR/neovim-wrapper" "$USR_BIN_DIR/nvim"
+      elif [ -f "$SHARE_DIR/neovim-wrapper" ]; then
+        cp -f "$SHARE_DIR/neovim-wrapper" "$USR_BIN_DIR/nvim"
+      fi
+      chmod 0755 "$USR_BIN_DIR/nvim" 2>/dev/null || true
+    fi
+
+    if [ -x "$PKG_DIR/bin/nvim" ]; then
+      local ver
+      ver="$(setting version)"
+      [ -n "$ver" ] || ver="$(old_version)"
+      if [ ! -x "$USR_LIB_DIR/bin/nvim" ] || [ "$(cat "$USR_LIB_DIR/.mos-version" 2>/dev/null)" != "$ver" ]; then
+        rm -rf "$USR_LIB_DIR.new"
+        cp -a "$PKG_DIR" "$USR_LIB_DIR.new" 2>/dev/null || return 0
+        printf '%s\n' "$ver" > "$USR_LIB_DIR.new/.mos-version"
+        rm -rf "$USR_LIB_DIR"
+        mv "$USR_LIB_DIR.new" "$USR_LIB_DIR"
+      fi
+    fi
+  fi
+}
+
+cmd_check_version() {
+  local json tag latest current update=false
+  ensure_settings
+  init_token
+  current="$(current_version)"
+  [ -n "$current" ] || current="not installed"
+
+  if ! json="$(gh_get "https://api.github.com/repos/$GH_REPO/releases/latest")"; then
+    printf '{"current":"%s","latest":"","update_available":false,"error":"cannot reach GitHub"}\n' "$current"
+    return 1
+  fi
+
+  tag="$(printf '%s' "$json" | jq -r '.tag_name // empty' 2>/dev/null)"
+  latest="${tag#v}"
+  if [ -z "$latest" ]; then
+    printf '{"current":"%s","latest":"","update_available":false,"error":"invalid release data"}\n' "$current"
+    return 1
+  fi
+  if [ "$current" != "$latest" ]; then update=true; fi
+  printf '{"current":"%s","latest":"%s","update_available":%s}\n' "$current" "$latest" "$update"
+}
+
+cmd_install_binary() {
+  local pin_arg pin json tag version asset url digest tmp
+  ensure_settings
+  init_token
+
+  pin_arg="${2:-}"
+  if [ "$pin_arg" = "latest" ]; then
+    pin=""
+  else
+    pin="$(setting pin_version)"
+  fi
+
+  if [ -n "$pin" ]; then
+    json="$(gh_get "https://api.github.com/repos/$GH_REPO/releases/tags/v$pin")" || fail "cannot fetch release v$pin"
+  else
+    json="$(gh_get "https://api.github.com/repos/$GH_REPO/releases/latest")" || fail "cannot fetch latest release"
+  fi
+
+  tag="$(printf '%s' "$json" | jq -r '.tag_name // empty' 2>/dev/null)"
+  version="${tag#v}"
+  [ -n "$version" ] || fail "release has no version"
+  asset="$(asset_name)" || fail "unsupported architecture: $(uname -m)"
+
+  url="$(printf '%s' "$json" | jq -r --arg n "$asset" '.assets[] | select(.name == $n) | .browser_download_url' 2>/dev/null | head -n1)"
+  digest="$(printf '%s' "$json" | jq -r --arg n "$asset" '.assets[] | select(.name == $n) | .digest // empty' 2>/dev/null | head -n1)"
+  [ -n "$url" ] || fail "no $asset asset in release"
+
+  tmp="$(mktemp -d)" || fail "cannot create temporary directory"
+  trap 'rm -rf "$tmp"' EXIT
+
+  say "Downloading Neovim $version ($asset)..."
+  curl -fsSL --connect-timeout 20 --retry 2 "$url" -o "$tmp/nvim.tar.gz" || fail "download failed"
+  if [ -n "$digest" ]; then
+    case "$digest" in sha256:*) digest="${digest#sha256:}" ;; esac
+    if command -v sha256sum >/dev/null 2>&1; then
+      ( cd "$tmp" && printf '%s  %s\n' "$digest" "nvim.tar.gz" | sha256sum -c - >/dev/null ) || fail "checksum mismatch"
+    else
+      local got
+      got="$(shasum -a 256 "$tmp/nvim.tar.gz" | awk '{print $1}')"
+      [ "$got" = "$digest" ] || fail "checksum mismatch"
+    fi
+  fi
+
+  mkdir -p "$tmp/nvim"
+  tar -xzf "$tmp/nvim.tar.gz" -C "$tmp/nvim" --strip-components=1 || fail "cannot extract archive"
+  [ -x "$tmp/nvim/bin/nvim" ] || fail "archive does not contain bin/nvim"
+  "$tmp/nvim/bin/nvim" --version >/dev/null 2>&1 || fail "downloaded Neovim does not run"
+
+  rm -rf "$PKG_DIR.new"
+  mv "$tmp/nvim" "$PKG_DIR.new" || fail "cannot stage Neovim"
+  rm -rf "$PKG_DIR"
+  mv "$PKG_DIR.new" "$PKG_DIR" || fail "cannot activate Neovim"
+  set_setting version "$version"
+  ensure_runtime_files
+  say "Installed Neovim $version"
+}
+
+cmd_init_config() {
+  local dir="$XDG_CONFIG_HOME/nvim" file
+  file="$dir/init.lua"
+  mkdir -p "$dir"
+  if [ -f "$file" ]; then
+    say "Config already exists: $file"
+    return 0
+  fi
+  cat > "$file" <<'LUA'
+-- Neovim configuration for MOS
+-- This file lives under /boot/optional/plugins/neovim/config/nvim
+vim.opt.number = true
+vim.opt.relativenumber = true
+vim.opt.termguicolors = true
+vim.opt.expandtab = true
+vim.opt.shiftwidth = 2
+vim.opt.tabstop = 2
+LUA
+  say "Created $file"
+}
+
+cmd_status() {
+  local installed=false version config runtime
+  config="$XDG_CONFIG_HOME/nvim/init.lua"
+  if [ -x "$PKG_DIR/bin/nvim" ]; then
+    installed=true
+  fi
+  version="$(current_version)"
+  [ -n "$version" ] || version="not installed"
+  if [ -x "$USR_LIB_DIR/bin/nvim" ]; then
+    runtime="$USR_LIB_DIR/share/nvim/runtime"
+  else
+    runtime="$PKG_DIR/share/nvim/runtime"
+  fi
+  printf '{"installed":%s,"version":"%s","config":"%s","runtime":"%s","command":"nvim"}\n' \
+    "$installed" "$version" "$config" "$runtime"
+}
+
+cmd_uninstall() {
+  if can_write_usr; then
+    rm -f "$USR_BIN_DIR/plugins/neovim" "$USR_BIN_DIR/nvim"
+    rm -rf "$USR_LIB_DIR"
+  fi
+  say "Removed Neovim runtime. Config and data kept in $PLG_DIR"
+}
+
+ensure_settings
+ensure_runtime_files
+
+case "${1:-}" in
+  check_version) cmd_check_version ;;
+  install_binary|install|update) cmd_install_binary "$@" ;;
+  init_config) cmd_init_config ;;
+  status) cmd_status ;;
+  ensure_runtime) ensure_runtime_files ;;
+  version) current_version ;;
+  uninstall) cmd_uninstall ;;
+  *)
+    echo "Usage: $0 {check_version|install_binary|init_config|status|ensure_runtime|version|uninstall}" >&2
+    exit 2
+    ;;
+esac

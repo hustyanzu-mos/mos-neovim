@@ -1,0 +1,141 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - '[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Plugin version, e.g. 0.1.0'
+        required: true
+        default: '0.1.0'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build Vue plugin
+        working-directory: page
+        env:
+          PLUGIN_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          npm install
+          npm run build
+
+      - name: Create package structure
+        run: |
+          VERSION='${{ steps.version.outputs.VERSION }}'
+          PKG_NAME="neovim-${VERSION}-1+mos-plugin"
+          PKG_DIR="${PKG_NAME}_all"
+
+          mkdir -p ${PKG_DIR}/usr/bin/plugins
+          mkdir -p ${PKG_DIR}/usr/share/neovim-plugin
+          mkdir -p ${PKG_DIR}/var/www/mos-plugins/neovim
+          mkdir -p ${PKG_DIR}/DEBIAN
+
+          cp neovim-backend ${PKG_DIR}/usr/bin/plugins/neovim
+          chmod 0755 ${PKG_DIR}/usr/bin/plugins/neovim
+          cp neovim-wrapper ${PKG_DIR}/usr/bin/nvim
+          chmod 0755 ${PKG_DIR}/usr/bin/nvim
+
+          cp neovim-backend ${PKG_DIR}/usr/share/neovim-plugin/
+          cp neovim-wrapper ${PKG_DIR}/usr/share/neovim-plugin/
+          cp functions settings.json ${PKG_DIR}/usr/share/neovim-plugin/
+          chmod 0755 ${PKG_DIR}/usr/share/neovim-plugin/neovim-backend
+          chmod 0755 ${PKG_DIR}/usr/share/neovim-plugin/neovim-wrapper
+          chmod 0755 ${PKG_DIR}/usr/share/neovim-plugin/functions
+
+          cp -R page/dist/neovim/. ${PKG_DIR}/var/www/mos-plugins/neovim/
+          cp images/neovim.png ${PKG_DIR}/var/www/mos-plugins/neovim/icon.png
+
+          cat > ${PKG_DIR}/DEBIAN/control << EOF
+          Package: neovim-plugin
+          Version: ${VERSION}-1+mos-plugin
+          Architecture: all
+          Maintainer: hustyanzu
+          Section: utils
+          Priority: optional
+          Description: Neovim plugin for MOS
+           Vim-based text editor with persistent config on MOS.
+          EOF
+
+          cat > ${PKG_DIR}/DEBIAN/postinst << 'EOF'
+          #!/bin/bash
+          set -e
+          PLG=/boot/optional/plugins/neovim
+          SHARE=/usr/share/neovim-plugin
+          mkdir -p "$PLG/config" "$PLG/data" "$PLG/state" "$PLG/cache"
+          chmod 0755 /usr/bin/plugins/neovim /usr/bin/nvim 2>/dev/null || true
+          for f in neovim-backend neovim-wrapper functions; do
+            cp -f "$SHARE/$f" "$PLG/$f"
+          done
+          chmod 0755 "$PLG/neovim-backend" "$PLG/neovim-wrapper" "$PLG/functions" 2>/dev/null || true
+          if [ ! -f "$PLG/settings.json" ]; then
+            cp -f "$SHARE/settings.json" "$PLG/settings.json"
+          fi
+          if [ -x "$PLG/nvim/bin/nvim" ]; then
+            rm -rf /usr/lib/neovim.new
+            cp -a "$PLG/nvim" /usr/lib/neovim.new
+            printf '%s\n' "$(jq -r '.version // empty' "$PLG/settings.json" 2>/dev/null)" > /usr/lib/neovim.new/.mos-version
+            rm -rf /usr/lib/neovim
+            mv /usr/lib/neovim.new /usr/lib/neovim
+          fi
+          exit 0
+          EOF
+          chmod 0755 ${PKG_DIR}/DEBIAN/postinst
+
+          cat > ${PKG_DIR}/DEBIAN/postrm << 'EOF'
+          #!/bin/bash
+          rm -rf /usr/lib/neovim
+          exit 0
+          EOF
+          chmod 0755 ${PKG_DIR}/DEBIAN/postrm
+
+      - name: Build .deb package
+        run: |
+          VERSION='${{ steps.version.outputs.VERSION }}'
+          PKG_NAME="neovim-${VERSION}-1+mos-plugin"
+          PKG_DIR="${PKG_NAME}_all"
+          DEB_FILE="${PKG_NAME}_all.deb"
+
+          dpkg-deb --build --root-owner-group ${PKG_DIR} ${DEB_FILE}
+          md5sum ${DEB_FILE} | awk '{print $1}' > ${DEB_FILE}.md5
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Neovim ${{ steps.version.outputs.VERSION }}
+          body: |
+            ## Neovim MOS plugin ${{ steps.version.outputs.VERSION }}
+
+            Install the plugin from the MOS Hub, then click **Install** on the plugin page.
+            Neovim itself is downloaded from the official GitHub releases.
+          files: |
+            neovim-${{ steps.version.outputs.VERSION }}-1+mos-plugin_all.deb
+            neovim-${{ steps.version.outputs.VERSION }}-1+mos-plugin_all.deb.md5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
