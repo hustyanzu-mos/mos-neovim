@@ -1,62 +1,34 @@
 #!/bin/bash
 # MOS lifecycle hooks for the Neovim plugin.
+# The editor itself is installed by the plugin .deb at /usr/lib/neovim.
 
 PLG_DIR="/boot/optional/plugins/neovim"
 HB="/usr/bin/plugins/neovim"
 SHARE_DIR="/usr/share/neovim-plugin"
 
-_setting() {
-  jq -r --arg k "$1" '.[$k] // empty' "$PLG_DIR/settings.json" 2>/dev/null
-}
-
 _restore() {
   mkdir -p "$PLG_DIR/config" "$PLG_DIR/data"
-
   for f in neovim-backend neovim-wrapper functions; do
     if [ ! -f "$PLG_DIR/$f" ] && [ -f "$SHARE_DIR/$f" ]; then
       cp -f "$SHARE_DIR/$f" "$PLG_DIR/$f"
     fi
   done
-
   if [ ! -f "$PLG_DIR/settings.json" ] && [ -f "$SHARE_DIR/settings.json" ]; then
     cp -f "$SHARE_DIR/settings.json" "$PLG_DIR/settings.json"
   fi
-
   if [ ! -x /usr/bin/plugins/neovim ]; then
     mkdir -p /usr/bin/plugins
-    if [ -f "$PLG_DIR/neovim-backend" ]; then
-      cp -f "$PLG_DIR/neovim-backend" /usr/bin/plugins/neovim
-    elif [ -f "$SHARE_DIR/neovim-backend" ]; then
-      cp -f "$SHARE_DIR/neovim-backend" /usr/bin/plugins/neovim
-    fi
+    [ -f "$PLG_DIR/neovim-backend" ] && cp -f "$PLG_DIR/neovim-backend" /usr/bin/plugins/neovim
     chmod 0755 /usr/bin/plugins/neovim 2>/dev/null || true
   fi
-
-  if [ ! -x /usr/bin/nvim ]; then
-    if [ -f "$PLG_DIR/neovim-wrapper" ]; then
-      cp -f "$PLG_DIR/neovim-wrapper" /usr/bin/nvim
-    elif [ -f "$SHARE_DIR/neovim-wrapper" ]; then
-      cp -f "$SHARE_DIR/neovim-wrapper" /usr/bin/nvim
-    fi
+  if [ ! -x /usr/bin/nvim ] && [ -f "$PLG_DIR/neovim-wrapper" ]; then
+    cp -f "$PLG_DIR/neovim-wrapper" /usr/bin/nvim
     chmod 0755 /usr/bin/nvim 2>/dev/null || true
-  fi
-
-  if [ -x "$HB" ]; then
-    "$HB" ensure_runtime >/dev/null 2>&1 || true
   fi
 }
 
 install() {
   _restore
-
-  local auto
-  auto="$(_setting auto_install)"
-  [ -z "$auto" ] && auto=true
-
-  if [ ! -x "$PLG_DIR/nvim/bin/nvim" ] && [ "$auto" = "true" ] && [ -x "$HB" ]; then
-    "$HB" install_binary >/dev/null 2>&1 || true
-  fi
-
   return 0
 }
 
@@ -64,8 +36,7 @@ uninstall() {
   if [ -x "$HB" ]; then
     "$HB" uninstall >/dev/null 2>&1 || true
   else
-    rm -f /usr/bin/plugins/neovim /usr/bin/nvim 2>/dev/null || true
-    rm -rf /usr/lib/neovim 2>/dev/null || true
+    rm -f /usr/bin/plugins/neovim 2>/dev/null || true
   fi
 }
 

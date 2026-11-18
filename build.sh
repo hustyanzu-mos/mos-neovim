@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build a local MOS plugin .deb for Neovim.
+# Build a local MOS plugin .deb for Neovim (host architecture).
+# The Neovim release tree is embedded in the .deb and installed under /usr/lib/neovim.
 
 set -euo pipefail
 
@@ -8,15 +9,22 @@ cd "$ROOT"
 
 VERSION="${1:-${VERSION:-}}"
 if [ -z "$VERSION" ]; then
-  VERSION="$(node -e "import('./page/plugin.config.js').then(m => console.log(m.default.version))" 2>/dev/null || echo 0.1.0)"
+  VERSION="$(node -e "import('./page/plugin.config.js').then(m => console.log(m.default.version))" 2>/dev/null || echo 0.2.0)"
 fi
 
-PKG_NAME="neovim-${VERSION}-1+mos-plugin"
-PKG_DIR="$ROOT/build/${PKG_NAME}_all"
-DEB_FILE="$ROOT/build/${PKG_NAME}_all.deb"
-PAGE_DIST="$ROOT/page/dist/neovim"
+case "$(uname -m)" in
+  x86_64|amd64) DEB_ARCH=amd64; NVIM_ARCH=x86_64 ;;
+  aarch64|arm64) DEB_ARCH=arm64; NVIM_ARCH=arm64 ;;
+  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
 
-echo "==> Neovim MOS plugin ${VERSION}"
+PKG_NAME="neovim-${VERSION}-1+mos-plugin_${DEB_ARCH}"
+PKG_DIR="$ROOT/build/${PKG_NAME}"
+DEB_FILE="$ROOT/build/${PKG_NAME}.deb"
+PAGE_DIST="$ROOT/page/dist/neovim"
+NVIM_ASSET="nvim-linux-${NVIM_ARCH}.tar.gz"
+
+echo "==> Neovim MOS plugin ${VERSION} (${DEB_ARCH})"
 
 if [ "${SKIP_PAGE:-0}" != "1" ]; then
   if ! command -v npm >/dev/null 2>&1; then
@@ -36,12 +44,34 @@ if [ ! -f "$PAGE_DIST/remoteEntry.js" ]; then
   exit 1
 fi
 
-rm -rf "$ROOT/build"
+rm -rf "$PKG_DIR"
 mkdir -p \
   "$PKG_DIR/DEBIAN" \
   "$PKG_DIR/usr/bin/plugins" \
+  "$PKG_DIR/usr/lib" \
   "$PKG_DIR/usr/share/neovim-plugin" \
   "$PKG_DIR/var/www/mos-plugins/neovim"
+
+echo "==> fetching Neovim ${NVIM_ASSET}"
+REL="$(curl -fsSL --retry 2 https://api.github.com/repos/neovim/neovim/releases/latest)"
+TAG="$(printf '%s' "$REL" | jq -r '.tag_name // empty')"
+NVIM_VERSION="${TAG#v}"
+[ -n "$NVIM_VERSION" ] || { echo "cannot read Neovim release" >&2; exit 1; }
+URL="$(printf '%s' "$REL" | jq -r --arg n "$NVIM_ASSET" '.assets[] | select(.name == $n) | .browser_download_url' | head -n1)"
+DIGEST="$(printf '%s' "$REL" | jq -r --arg n "$NVIM_ASSET" '.assets[] | select(.name == $n) | .digest // empty' | head -n1)"
+[ -n "$URL" ] || { echo "no $NVIM_ASSET asset" >&2; exit 1; }
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+curl -fsSL --retry 2 "$URL" -o "$TMP/nvim.tar.gz"
+if [ -n "$DIGEST" ]; then
+  case "$DIGEST" in sha256:*) DIGEST="${DIGEST#sha256:}" ;; esac
+  printf '%s  %s\n' "$DIGEST" "$TMP/nvim.tar.gz" | sha256sum -c - >/dev/null
+fi
+mkdir -p "$PKG_DIR/usr/lib/neovim"
+tar -xzf "$TMP/nvim.tar.gz" -C "$PKG_DIR/usr/lib/neovim" --strip-components=1 --no-same-owner
+chmod 0755 "$PKG_DIR/usr/lib/neovim/bin/nvim"
+"$PKG_DIR/usr/lib/neovim/bin/nvim" --version >/dev/null 2>&1 || { echo "Neovim does not run" >&2; exit 1; }
 
 install -m 0755 "$ROOT/neovim-backend" "$PKG_DIR/usr/bin/plugins/neovim"
 install -m 0755 "$ROOT/neovim-wrapper" "$PKG_DIR/usr/bin/nvim"
@@ -57,7 +87,7 @@ install -m 0644 "$ROOT/images/neovim.png" "$PKG_DIR/var/www/mos-plugins/neovim/i
 cat > "$PKG_DIR/DEBIAN/control" <<EOF
 Package: neovim-plugin
 Version: ${VERSION}-1+mos-plugin
-Architecture: all
+Architecture: ${DEB_ARCH}
 Maintainer: hustyanzu
 Section: utils
 Priority: optional
@@ -78,13 +108,6 @@ done
 chmod 0755 "$PLG/neovim-backend" "$PLG/neovim-wrapper" "$PLG/functions" 2>/dev/null || true
 if [ ! -f "$PLG/settings.json" ]; then
   cp -f "$SHARE/settings.json" "$PLG/settings.json"
-fi
-if [ -x "$PLG/nvim/bin/nvim" ]; then
-  rm -rf /usr/lib/neovim.new
-  cp -a "$PLG/nvim" /usr/lib/neovim.new
-  printf '%s\n' "$(jq -r '.version // empty' "$PLG/settings.json" 2>/dev/null)" > /usr/lib/neovim.new/.mos-version
-  rm -rf /usr/lib/neovim
-  mv /usr/lib/neovim.new /usr/lib/neovim
 fi
 exit 0
 EOF
@@ -114,6 +137,6 @@ md5sum "$DEB_FILE" | awk '{print $1}' > "$DEB_FILE.md5"
 echo
 echo "Package: $DEB_FILE"
 echo "MD5:     $(cat "$DEB_FILE.md5")"
+echo "Neovim:  $NVIM_VERSION"
 echo
-echo "Install on MOS:  dpkg -i $(basename "$DEB_FILE")"
-echo "Then open Plugins -> Neovim and click Install."
+echo "Install the plugin via MOS Hub."
