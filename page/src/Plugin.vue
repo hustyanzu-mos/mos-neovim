@@ -71,6 +71,22 @@
           <v-btn size="small" variant="tonal" class="mt-3" :loading="creatingConfig" @click="createConfig">
             Create default init.lua
           </v-btn>
+
+          <v-divider class="my-4" />
+
+          <v-text-field
+            v-model="form.data_dir"
+            label="Data directory (optional)"
+            hint="Use a pool path such as /mnt/cache/appdata/neovim. Empty keeps data under /boot."
+            persistent-hint
+          />
+          <p class="text-caption text-medium-emphasis mt-2">
+            Current data: {{ status.data || '-' }}
+          </p>
+          <v-btn size="small" color="primary" class="mt-4" :loading="saving" @click="saveSettings">
+            <v-icon start>mdi-content-save</v-icon>
+            Save settings
+          </v-btn>
         </v-card-text>
       </v-card>
 
@@ -98,22 +114,24 @@ nvim /mnt/cache/some-file.txt</pre>
 import { ref, reactive, onMounted } from 'vue';
 
 const PLUGIN_NAME = 'neovim';
-const DEFAULT_SETTINGS = { auto_install: true, pin_version: '', version: '' };
+const DEFAULT_SETTINGS = { auto_install: true, pin_version: '', version: '', data_dir: '' };
 
 const loading = ref(true);
 const checking = ref(false);
 const installing = ref(false);
 const updating = ref(false);
 const creatingConfig = ref(false);
+const saving = ref(false);
 const error = ref('');
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
 
 const settings = reactive({ ...DEFAULT_SETTINGS });
-const status = reactive({ installed: false, version: '', config: '', runtime: '', command: 'nvim' });
+const status = reactive({ installed: false, version: '', config: '', data: '', runtime: '', command: 'nvim' });
 const latestVersion = ref('');
 const updateAvailable = ref(false);
+const form = reactive({ data_dir: '' });
 
 const authHeaders = () => ({ Authorization: 'Bearer ' + (localStorage.getItem('authToken') || '') });
 const jsonHeaders = () => ({ ...authHeaders(), 'Content-Type': 'application/json' });
@@ -157,6 +175,32 @@ async function fetchSettings() {
   for (const key of Object.keys(DEFAULT_SETTINGS)) {
     if (data[key] !== undefined && data[key] !== null) settings[key] = data[key];
   }
+  form.data_dir = settings.data_dir || '';
+}
+
+async function saveSettings() {
+  saving.value = true;
+  try {
+    const payload = {
+      auto_install: settings.auto_install,
+      pin_version: settings.pin_version || '',
+      version: settings.version || '',
+      data_dir: form.data_dir.trim(),
+    };
+    const res = await fetch(`/api/v1/mos/plugins/settings/${PLUGIN_NAME}`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`Save failed: HTTP ${res.status}`);
+    Object.assign(settings, payload);
+    await refreshStatus();
+    notify('Settings saved');
+  } catch (e) {
+    setError(e);
+  } finally {
+    saving.value = false;
+  }
 }
 
 async function refreshStatus() {
@@ -165,6 +209,7 @@ async function refreshStatus() {
   status.installed = out.installed === true;
   status.version = out.version || '';
   status.config = out.config || '';
+  status.data = out.data || '';
   status.runtime = out.runtime || '';
   status.command = out.command || 'nvim';
   if (out.version && out.version !== 'not installed') settings.version = out.version;

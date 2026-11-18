@@ -36,7 +36,8 @@ write_default_settings() {
 {
   "auto_install": true,
   "pin_version": "",
-  "version": ""
+  "version": "",
+  "data_dir": ""
 }
 JSON
 }
@@ -269,8 +270,10 @@ LUA
 }
 
 cmd_status() {
-  local installed=false version config runtime
+  local installed=false version config runtime data
   config="$XDG_CONFIG_HOME/nvim/init.lua"
+  data="$(setting data_dir)"
+  [ -n "$data" ] || data="$XDG_DATA_HOME"
   if [ -x "$PKG_DIR/bin/nvim" ]; then
     installed=true
   fi
@@ -281,8 +284,8 @@ cmd_status() {
   else
     runtime="$PKG_DIR/share/nvim/runtime"
   fi
-  printf '{"installed":%s,"version":"%s","config":"%s","runtime":"%s","command":"nvim"}\n' \
-    "$installed" "$version" "$config" "$runtime"
+  printf '{"installed":%s,"version":"%s","config":"%s","data":"%s","runtime":"%s","command":"nvim"}\n' \
+    "$installed" "$version" "$config" "$data" "$runtime"
 }
 
 cmd_uninstall() {

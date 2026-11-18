@@ -116,6 +116,27 @@ VIMRUNTIME=/usr/lib/neovim/share/nvim/runtime
 
 ---
 
+## 持久化
+
+MOS 的 Hub 安装器会把 `.deb` 和 `functions` 放到：
+
+```text
+/boot/optional/plugins/neovim/<version>/
+```
+
+并在插件根目录写 `template.json`。启动时 `installplugins-mos` 会重新安装该
+`.deb`，`mos_start` 会恢复 `/usr/bin`/`/usr/lib` 里的运行时。
+
+- 配置：`/boot/optional/plugins/neovim/config`
+- 数据：`data_dir` 或 `/boot/optional/plugins/neovim/data`
+- 运行时：`/usr/lib/neovim`（RAM，重启后从持久化树复制）
+- `/boot/optional/plugins/neovim/nvim`：官方 release 树（持久化）
+
+如果手动 `dpkg -i`，插件只对当前运行有效；要让它重启后仍然存在，请使用
+MOS Hub，或把 `.deb`/`functions` 放到版本目录并补上 `template.json`。
+
+---
+
 ## 设置
 
 | 键 | 默认 | 说明 |
@@ -123,6 +144,10 @@ VIMRUNTIME=/usr/lib/neovim/share/nvim/runtime
 | `auto_install` | `true` | 二进制缺失时自动下载 |
 | `pin_version` | `""` | 固定 Neovim 版本，例如 `0.12.6`；空为最新 |
 | `version` | `""` | 已安装版本，由插件维护 |
+| `data_dir` | `""` | 可选。数据/插件目录，建议放在 pool appdata，例如 `/mnt/cache/appdata/neovim`；空则用插件目录下的 `data` |
+
+MOS 建议把会持续增长或频繁写入的数据放到 pool/appdata，而不是 USB 的
+`/boot`。配置很小，继续留在 `/boot`；`data_dir` 可以指向 appdata。
 
 插件页的 **Install/Update** 始终安装最新 release；`pin_version` 只影响
 `functions install` 的自动安装。

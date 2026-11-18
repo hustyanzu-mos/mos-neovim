@@ -20,11 +20,22 @@ if [ ! -x "$NVIM" ]; then
 fi
 
 export XDG_CONFIG_HOME="$PLG_DIR/config"
-export XDG_DATA_HOME="$PLG_DIR/data"
 export XDG_STATE_HOME="$PLG_DIR/state"
-export XDG_CACHE_HOME="$PLG_DIR/cache"
 export VIMRUNTIME
 
-mkdir -p "$XDG_CONFIG_HOME/nvim" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME" 2>/dev/null || true
+DATA_DIR="$PLG_DIR/data"
+CACHE_DIR="$PLG_DIR/cache"
+if command -v jq >/dev/null 2>&1 && [ -f "$PLG_DIR/settings.json" ]; then
+  custom="$(jq -r '.data_dir // empty' "$PLG_DIR/settings.json" 2>/dev/null)"
+  if [ -n "$custom" ]; then
+    DATA_DIR="$custom"
+    CACHE_DIR="$custom/cache"
+  fi
+fi
+
+export XDG_DATA_HOME="$DATA_DIR"
+export XDG_CACHE_HOME="$CACHE_DIR"
+
+mkdir -p "$XDG_CONFIG_HOME/nvim" "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" 2>/dev/null || true
 
 exec "$NVIM" "$@"
