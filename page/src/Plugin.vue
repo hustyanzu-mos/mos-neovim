@@ -9,6 +9,23 @@
         {{ error }}
       </v-alert>
 
+      <v-alert
+        v-if="status.config_exists && status.data_mode === 'memory'"
+        type="warning"
+        variant="tonal"
+        class="mb-4"
+      >
+        <div class="font-weight-medium">Persistent config with RAM data</div>
+        <div class="text-body-2 mt-1">
+          init.lua is persistent, but plugins installed under data are in RAM and will be lost on reboot.
+          If init.lua loads external plugins, set a persistent data directory. A pool path such as
+          /mnt/cache/appdata/neovim is recommended.
+        </div>
+        <v-btn size="small" variant="tonal" class="mt-2" @click="usePersistentData">
+          Use persistent data
+        </v-btn>
+      </v-alert>
+
       <v-card class="mb-4 pa-0">
         <v-card-title class="d-flex align-center">
           <v-icon class="mr-2">mdi-pencil-box-outline</v-icon>
@@ -77,11 +94,19 @@
           <v-text-field
             v-model="form.data_dir"
             label="Data directory (optional)"
-            hint="Use a pool path such as /mnt/cache/appdata/neovim. Empty keeps data under /boot."
+            hint="Empty uses RAM (/run/neovim) and is cleared on reboot. Set an absolute pool path such as /mnt/cache/appdata/neovim to persist it."
             persistent-hint
           />
           <p class="text-caption text-medium-emphasis mt-2">
             Current data: {{ status.data || '-' }}
+            <v-chip
+              size="small"
+              :color="status.data_mode === 'persistent' ? 'success' : 'info'"
+              variant="tonal"
+              class="ml-2"
+            >
+              {{ status.data_mode === 'persistent' ? 'Persistent' : 'Memory' }}
+            </v-chip>
           </p>
           <v-btn size="small" color="primary" class="mt-4" :loading="saving" @click="saveSettings">
             <v-icon start>mdi-content-save</v-icon>
@@ -128,7 +153,20 @@ const snackbarText = ref('');
 const snackbarColor = ref('success');
 
 const settings = reactive({ ...DEFAULT_SETTINGS });
-const status = reactive({ installed: false, version: '', config: '', data: '', runtime: '', command: 'nvim' });
+const status = reactive({
+  installed: false,
+  version: '',
+  config: '',
+  data: '',
+  data_mode: 'memory',
+  config_exists: false,
+  runtime: '',
+  plugin_dir: '',
+  release: '',
+  config_root: '',
+  state_root: '',
+  command: 'nvim',
+});
 const latestVersion = ref('');
 const updateAvailable = ref(false);
 const form = reactive({ data_dir: '' });
@@ -178,14 +216,35 @@ async function fetchSettings() {
   form.data_dir = settings.data_dir || '';
 }
 
+function usePersistentData() {
+  if (status.plugin_dir) {
+    form.data_dir = `${status.plugin_dir}/data`;
+    notify('Set to the plugin data directory; change it to a pool path if preferred, then Save');
+  }
+}
+
 async function saveSettings() {
   saving.value = true;
   try {
+    const value = form.data_dir.trim();
+    if (value) {
+      if (!value.startsWith('/')) {
+        throw new Error('Data directory must be an absolute path');
+      }
+      const allowed = status.plugin_dir ? `${status.plugin_dir}/data` : '';
+      const inAllowed = Boolean(allowed) && (value === allowed || value.startsWith(allowed + '/'));
+      if (!inAllowed) {
+        const reserved = [status.plugin_dir, status.release, status.config_root, status.state_root].filter(Boolean);
+        if (reserved.some((p) => value === p || value.startsWith(p + '/'))) {
+          throw new Error('Data directory must be outside the plugin directory; use a pool path such as /mnt/cache/appdata/neovim');
+        }
+      }
+    }
     const payload = {
       auto_install: settings.auto_install,
       pin_version: settings.pin_version || '',
       version: settings.version || '',
-      data_dir: form.data_dir.trim(),
+      data_dir: value,
     };
     const res = await fetch(`/api/v1/mos/plugins/settings/${PLUGIN_NAME}`, {
       method: 'POST',
@@ -210,7 +269,13 @@ async function refreshStatus() {
   status.version = out.version || '';
   status.config = out.config || '';
   status.data = out.data || '';
+  status.data_mode = out.data_mode || 'memory';
+  status.config_exists = out.config_exists === true;
   status.runtime = out.runtime || '';
+  status.plugin_dir = out.plugin_dir || '';
+  status.release = out.release || '';
+  status.config_root = out.config_root || '';
+  status.state_root = out.state_root || '';
   status.command = out.command || 'nvim';
   if (out.version && out.version !== 'not installed') settings.version = out.version;
 }

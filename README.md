@@ -14,7 +14,7 @@
 - 把完整 release 树持久化到 `/boot/optional/plugins/neovim/nvim`
 - 把运行树复制到 `/usr/lib/neovim`（RAM），避免 `/boot` noexec 的限制
 - 安装 `/usr/bin/nvim` 包装脚本
-- 把配置、数据、状态、缓存固定到持久化目录：
+- 配置和状态固定到持久化目录；data/cache 默认放 `/run`（RAM），可用 `data_dir` 指向 pool 持久化
   - config: `/boot/optional/plugins/neovim/config/nvim`
   - data: `/boot/optional/plugins/neovim/data`
   - state: `/boot/optional/plugins/neovim/state`
@@ -99,9 +99,9 @@ nvim /mnt/cache/some-file.txt
 
 ```text
 XDG_CONFIG_HOME=/boot/optional/plugins/neovim/config
-XDG_DATA_HOME=/boot/optional/plugins/neovim/data
 XDG_STATE_HOME=/boot/optional/plugins/neovim/state
-XDG_CACHE_HOME=/boot/optional/plugins/neovim/cache
+XDG_DATA_HOME=/run/neovim/data          # 默认 RAM；设置 data_dir 后改为持久路径
+XDG_CACHE_HOME=/run/neovim/cache        # 默认 RAM；设置 data_dir 后改为 <data_dir>/cache
 VIMRUNTIME=/usr/lib/neovim/share/nvim/runtime
 ```
 
@@ -112,7 +112,8 @@ VIMRUNTIME=/usr/lib/neovim/share/nvim/runtime
 ```
 
 插件页可以创建一份基础的 `init.lua`；之后用 SSH 或 Filebrowser 编辑。
-配置、插件数据和撤销历史都会在重启后保留。
+配置和 state 会持久保留；data/cache 默认在 `/run/neovim`（内存），
+如果填了 `data_dir`（例如 `/mnt/cache/appdata/neovim`），data/cache 会持久化。
 
 ---
 
@@ -128,7 +129,7 @@ MOS 的 Hub 安装器会把 `.deb` 和 `functions` 放到：
 `.deb`，`mos_start` 会恢复 `/usr/bin`/`/usr/lib` 里的运行时。
 
 - 配置：`/boot/optional/plugins/neovim/config`
-- 数据：`data_dir` 或 `/boot/optional/plugins/neovim/data`
+- 数据：`data_dir`；留空时是 `/run/neovim/data`（RAM，重启清空）
 - 运行时：`/usr/lib/neovim`（RAM，重启后从持久化树复制）
 - `/boot/optional/plugins/neovim/nvim`：官方 release 树（持久化）
 
@@ -144,10 +145,30 @@ MOS Hub，或把 `.deb`/`functions` 放到版本目录并补上 `template.json`�
 | `auto_install` | `true` | 二进制缺失时自动下载 |
 | `pin_version` | `""` | 固定 Neovim 版本，例如 `0.12.6`；空为最新 |
 | `version` | `""` | 已安装版本，由插件维护 |
-| `data_dir` | `""` | 可选。数据/插件目录，建议放在 pool appdata，例如 `/mnt/cache/appdata/neovim`；空则用插件目录下的 `data` |
+| `data_dir` | `""` | 可选。留空则 data/cache 在 `/run/neovim`（内存，重启清空）；填了则持久化到该路径（pool 如 `/mnt/cache/appdata/neovim`，或 `/boot/optional/plugins/neovim/data`） |
 
 MOS 建议把会持续增长或频繁写入的数据放到 pool/appdata，而不是 USB 的
-`/boot`。配置很小，继续留在 `/boot`；`data_dir` 可以指向 appdata。
+`/boot`。配置和 state 很小，继续留在 `/boot`；`data_dir` 留空时数据在 RAM，
+填了才持久化到 pool。
+
+`config`、`data`、`state`、`cache` 是四个独立的 XDG 根，不会互相覆盖。
+但 `data_dir` 必须是绝对路径，并且不能指向插件根目录
+（`/boot/optional/plugins/neovim`）、release 树（`.../nvim`）或配置目录
+（`.../config`）；页面和后端会拒绝这种填法，避免和插件文件混在一起。
+
+### config 与 data 的依赖
+
+路径上不冲突，但依赖上会：如果 `init.lua` 是持久的，而插件装在 RAM 的
+`data` 里，重启后 `init.lua` 引用的插件会消失。
+
+- **插件型配置**：把 `data_dir` 设成持久路径。推荐 pool appdata，例如
+  `/mnt/cache/appdata/neovim`；也可以退回 `/boot/optional/plugins/neovim/data`，
+  但会占 USB 空间/写入。
+- **空 `data_dir`（RAM）**：适合不依赖外部插件的配置，或者 `init.lua` 自带
+  lazy.nvim 自举、每次启动重新安装插件（需要网络）。
+- 插件页在检测到 `init.lua` 存在且 data 在 RAM 时会显示警告，并提供
+  **Use persistent data** 按钮；它会先填 `/boot/optional/plugins/neovim/data`，
+  你可以改成 pool 路径再保存。
 
 插件页的 **Install/Update** 始终安装最新 release；`pin_version` 只影响
 `functions install` 的自动安装。
@@ -160,7 +181,8 @@ MOS 建议把会持续增长或频繁写入的数据放到 pool/appdata，而不
 后端会下载新 tarball、校验 sha256、替换持久化树，并刷新 `/usr/lib/neovim`。
 
 **卸载**：卸载插件会移除 `/usr/bin/nvim` 和 `/usr/lib/neovim`；
-`/boot/optional/plugins/neovim` 里的配置和数据会保留，需要时手动删除。
+`/boot/optional/plugins/neovim` 里的配置和 state 会保留，需要时手动删除。
+如果设置过 `data_dir`，那份数据在 pool 上，不会自动删除。
 
 ---
 

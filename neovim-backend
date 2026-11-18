@@ -22,11 +22,12 @@ SHARE_DIR="${NEOVIM_SHARE_DIR:-/usr/share/neovim-plugin}"
 GH_REPO="neovim/neovim"
 
 export XDG_CONFIG_HOME="$PLG_DIR/config"
-export XDG_DATA_HOME="$PLG_DIR/data"
 export XDG_STATE_HOME="$PLG_DIR/state"
-export XDG_CACHE_HOME="$PLG_DIR/cache"
+RAM_DIR="${NEOVIM_RAM_DIR:-/run/neovim}"
+export XDG_DATA_HOME="$RAM_DIR/data"
+export XDG_CACHE_HOME="$RAM_DIR/cache"
 
-mkdir -p "$PLG_DIR" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME" 2>/dev/null
+mkdir -p "$PLG_DIR" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" 2>/dev/null
 
 fail() { echo "Error: $*" >&2; exit 1; }
 say() { echo "$*"; }
@@ -270,10 +271,18 @@ LUA
 }
 
 cmd_status() {
-  local installed=false version config runtime data
+  local installed=false version config runtime data data_mode config_exists=false
   config="$XDG_CONFIG_HOME/nvim/init.lua"
+  if [ -f "$config" ] || [ -f "$XDG_CONFIG_HOME/nvim/init.vim" ]; then
+    config_exists=true
+  fi
   data="$(setting data_dir)"
-  [ -n "$data" ] || data="$XDG_DATA_HOME"
+  if [ -n "$data" ]; then
+    data_mode="persistent"
+  else
+    data="$RAM_DIR/data"
+    data_mode="memory"
+  fi
   if [ -x "$PKG_DIR/bin/nvim" ]; then
     installed=true
   fi
@@ -284,8 +293,8 @@ cmd_status() {
   else
     runtime="$PKG_DIR/share/nvim/runtime"
   fi
-  printf '{"installed":%s,"version":"%s","config":"%s","data":"%s","runtime":"%s","command":"nvim"}\n' \
-    "$installed" "$version" "$config" "$data" "$runtime"
+  printf '{"installed":%s,"version":"%s","config":"%s","data":"%s","data_mode":"%s","config_exists":%s,"runtime":"%s","plugin_dir":"%s","release":"%s","config_root":"%s","state_root":"%s","command":"nvim"}\n' \
+    "$installed" "$version" "$config" "$data" "$data_mode" "$config_exists" "$runtime" "$PLG_DIR" "$PKG_DIR" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
 }
 
 cmd_uninstall() {

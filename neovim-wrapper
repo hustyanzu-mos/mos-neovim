@@ -23,11 +23,23 @@ export XDG_CONFIG_HOME="$PLG_DIR/config"
 export XDG_STATE_HOME="$PLG_DIR/state"
 export VIMRUNTIME
 
-DATA_DIR="$PLG_DIR/data"
-CACHE_DIR="$PLG_DIR/cache"
+RAM_DIR="${NEOVIM_RAM_DIR:-/run/neovim}"
+DATA_DIR="$RAM_DIR/data"
+CACHE_DIR="$RAM_DIR/cache"
 if command -v jq >/dev/null 2>&1 && [ -f "$PLG_DIR/settings.json" ]; then
   custom="$(jq -r '.data_dir // empty' "$PLG_DIR/settings.json" 2>/dev/null)"
   if [ -n "$custom" ]; then
+    case "$custom" in
+      /*) ;;
+      *) echo "data_dir must be an absolute path" >&2; exit 1 ;;
+    esac
+    case "$custom" in
+      "$PLG_DIR/data"|"$PLG_DIR/data/"*) ;;
+      "$PLG_DIR"|"$PLG_DIR/"*)
+        echo "data_dir must be outside $PLG_DIR (except $PLG_DIR/data); use a pool path such as /mnt/cache/appdata/neovim" >&2
+        exit 1
+        ;;
+    esac
     DATA_DIR="$custom"
     CACHE_DIR="$custom/cache"
   fi
