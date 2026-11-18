@@ -1,0 +1,104 @@
+#!/bin/sh
+# Shared path resolution for the Neovim MOS plugin.
+# Sourced by neovim-wrapper and neovim-backend.
+
+NEOVIM_PLUGIN_DIR="${NEOVIM_PLUGIN_DIR:-/boot/optional/plugins/neovim}"
+NEOVIM_SETTINGS="${NEOVIM_SETTINGS:-$NEOVIM_PLUGIN_DIR/settings.json}"
+NEOVIM_RAM_DIR="${NEOVIM_RAM_DIR:-/run/neovim}"
+NEOVIM_USR_LIB_DIR="${NEOVIM_USR_LIB_DIR:-/usr/lib/neovim}"
+NEOVIM_SHARE_DIR="${NEOVIM_SHARE_DIR:-/usr/share/neovim-plugin}"
+
+neovim_setting() {
+  [ -f "$NEOVIM_SETTINGS" ] || return 0
+  if command -v jq >/dev/null 2>&1; then
+    jq -r --arg k "$1" '.[$k] // empty' "$NEOVIM_SETTINGS" 2>/dev/null
+  else
+    sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$NEOVIM_SETTINGS" | head -n 1
+  fi
+}
+
+neovim_is_mount() {
+  [ -d "$1" ] || return 1
+  awk -v p="$1" '$2 == p { found = 1 } END { exit !found }' /proc/mounts 2>/dev/null
+}
+
+neovim_pick_pool() {
+  local parent appdata
+  for parent in /mnt/cache /mnt/user /mnt/disk*; do
+    [ -d "$parent" ] || continue
+    neovim_is_mount "$parent" || continue
+    appdata="$parent/appdata"
+    mkdir -p "$appdata" 2>/dev/null || continue
+    [ -w "$appdata" ] && { printf '%s\n' "$appdata"; return 0; }
+  done
+  return 1
+}
+
+neovim_path_mode() {
+  case "$1" in
+    /mnt/*) printf 'persistent\n' ;;
+    *) printf 'memory\n' ;;
+  esac
+}
+
+neovim_resolve_paths() {
+  local config_setting data_setting pool default_root
+
+  config_setting="$(neovim_setting config_dir)"
+  data_setting="$(neovim_setting data_dir)"
+
+  # The old backend used the plugin directory for data. Treat it as "auto".
+  case "$data_setting" in
+    "$NEOVIM_PLUGIN_DIR/data"|"$NEOVIM_PLUGIN_DIR/data/") data_setting="" ;;
+  esac
+
+  if pool="$(neovim_pick_pool)"; then
+    NEOVIM_POOL_ROOT="$pool"
+    NEOVIM_STORAGE_MODE="persistent"
+    default_root="$pool/neovim"
+  else
+    NEOVIM_POOL_ROOT=""
+    NEOVIM_STORAGE_MODE="memory"
+    default_root="$NEOVIM_RAM_DIR"
+  fi
+
+  NEOVIM_CONFIG_ROOT="${config_setting:-$default_root/config}"
+  NEOVIM_DATA_ROOT="${data_setting:-$default_root/data}"
+  NEOVIM_STATE_ROOT="$NEOVIM_RAM_DIR/state"
+  NEOVIM_CACHE_ROOT="$NEOVIM_RAM_DIR/cache"
+
+  NEOVIM_CONFIG_MODE="$(neovim_path_mode "$NEOVIM_CONFIG_ROOT")"
+  NEOVIM_DATA_MODE="$(neovim_path_mode "$NEOVIM_DATA_ROOT")"
+  if [ "$NEOVIM_CONFIG_MODE" = "memory" ] || [ "$NEOVIM_DATA_MODE" = "memory" ]; then
+    NEOVIM_STORAGE_MODE="memory"
+  fi
+}
+
+neovim_migrate_config() {
+  local old="$NEOVIM_PLUGIN_DIR/config"
+  [ "$NEOVIM_CONFIG_ROOT" = "$old" ] && return 0
+  [ -d "$old/nvim" ] || return 0
+  if [ -d "$NEOVIM_CONFIG_ROOT/nvim" ] && [ -n "$(ls -A "$NEOVIM_CONFIG_ROOT/nvim" 2>/dev/null)" ]; then
+    return 0
+  fi
+  mkdir -p "$NEOVIM_CONFIG_ROOT" 2>/dev/null || return 0
+  cp -a "$old/." "$NEOVIM_CONFIG_ROOT/" 2>/dev/null || true
+}
+
+neovim_migrate_data() {
+  local old="$NEOVIM_PLUGIN_DIR/data"
+  [ "$NEOVIM_DATA_ROOT" = "$old" ] && return 0
+  [ -d "$old" ] || return 0
+  if [ -d "$NEOVIM_DATA_ROOT" ] && [ -n "$(ls -A "$NEOVIM_DATA_ROOT" 2>/dev/null)" ]; then
+    return 0
+  fi
+  mkdir -p "$NEOVIM_DATA_ROOT" 2>/dev/null || return 0
+  cp -a "$old/." "$NEOVIM_DATA_ROOT/" 2>/dev/null || true
+}
+
+neovim_prepare() {
+  neovim_resolve_paths
+  neovim_migrate_config
+  neovim_migrate_data
+  mkdir -p "$NEOVIM_CONFIG_ROOT/nvim" "$NEOVIM_DATA_ROOT" "$NEOVIM_STATE_ROOT" "$NEOVIM_CACHE_ROOT" 2>/dev/null || true
+}

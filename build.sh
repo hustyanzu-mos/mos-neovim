@@ -9,7 +9,7 @@ cd "$ROOT"
 
 VERSION="${1:-${VERSION:-}}"
 if [ -z "$VERSION" ]; then
-  VERSION="$(node -e "import('./page/plugin.config.js').then(m => console.log(m.default.version))" 2>/dev/null || echo 0.2.0)"
+  VERSION="$(node -e "import('./page/plugin.config.js').then(m => console.log(m.default.version))" 2>/dev/null || echo 0.2.1)"
 fi
 
 case "$(uname -m)" in
@@ -79,6 +79,7 @@ install -m 0755 "$ROOT/neovim-wrapper" "$PKG_DIR/usr/bin/nvim"
 install -m 0755 "$ROOT/neovim-backend" "$PKG_DIR/usr/share/neovim-plugin/neovim-backend"
 install -m 0755 "$ROOT/neovim-wrapper" "$PKG_DIR/usr/share/neovim-plugin/neovim-wrapper"
 install -m 0755 "$ROOT/functions" "$PKG_DIR/usr/share/neovim-plugin/functions"
+install -m 0644 "$ROOT/neovim-env" "$PKG_DIR/usr/share/neovim-plugin/neovim-env"
 install -m 0644 "$ROOT/settings.json" "$PKG_DIR/usr/share/neovim-plugin/settings.json"
 
 cp -a "$PAGE_DIST/." "$PKG_DIR/var/www/mos-plugins/neovim/"
@@ -92,33 +93,11 @@ Maintainer: hustyanzu
 Section: utils
 Priority: optional
 Description: Neovim plugin for MOS
- Vim-based text editor with persistent config on MOS.
+ Vim-based text editor with config and data on the MOS pool.
 EOF
 
-cat > "$PKG_DIR/DEBIAN/postinst" <<'EOF'
-#!/bin/bash
-set -e
-PLG=/boot/optional/plugins/neovim
-SHARE=/usr/share/neovim-plugin
-mkdir -p "$PLG/config" "$PLG/data"
-chmod 0755 /usr/bin/plugins/neovim /usr/bin/nvim 2>/dev/null || true
-for f in neovim-backend neovim-wrapper functions; do
-  cp -f "$SHARE/$f" "$PLG/$f"
-done
-chmod 0755 "$PLG/neovim-backend" "$PLG/neovim-wrapper" "$PLG/functions" 2>/dev/null || true
-if [ ! -f "$PLG/settings.json" ]; then
-  cp -f "$SHARE/settings.json" "$PLG/settings.json"
-fi
-exit 0
-EOF
-chmod 0755 "$PKG_DIR/DEBIAN/postinst"
-
-cat > "$PKG_DIR/DEBIAN/postrm" <<'EOF'
-#!/bin/bash
-rm -rf /usr/lib/neovim
-exit 0
-EOF
-chmod 0755 "$PKG_DIR/DEBIAN/postrm"
+install -m 0755 "$ROOT/debian/postinst" "$PKG_DIR/DEBIAN/postinst"
+install -m 0755 "$ROOT/debian/postrm" "$PKG_DIR/DEBIAN/postrm"
 
 echo "==> building ${DEB_FILE}"
 if command -v dpkg-deb >/dev/null 2>&1; then

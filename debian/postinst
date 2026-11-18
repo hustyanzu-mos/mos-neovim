@@ -1,0 +1,20 @@
+#!/bin/bash
+set -e
+PLG=/boot/optional/plugins/neovim
+SHARE=/usr/share/neovim-plugin
+
+mkdir -p "$PLG"
+chmod 0755 /usr/bin/plugins/neovim /usr/bin/nvim 2>/dev/null || true
+
+for f in neovim-backend neovim-wrapper functions; do
+  cp -f "$SHARE/$f" "$PLG/$f"
+done
+chmod 0755 "$PLG/neovim-backend" "$PLG/neovim-wrapper" "$PLG/functions" 2>/dev/null || true
+
+if [ ! -f "$PLG/settings.json" ]; then
+  cp -f "$SHARE/settings.json" "$PLG/settings.json"
+fi
+
+/usr/bin/plugins/neovim prepare >/dev/null 2>&1 || true
+
+exit 0

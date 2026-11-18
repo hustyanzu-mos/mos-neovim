@@ -13,10 +13,12 @@
 - 在构建时把 Neovim 官方 release 树打进插件 `.deb`
 - `.deb` 安装 Neovim 到 `/usr/lib/neovim`，安装 `/usr/bin/nvim` 包装脚本
 - MOS 启动时重新安装 `.deb`，恢复 `/usr/lib` 和 `/usr/bin`
-- `/boot` 只存 `.deb`、配置和数据，不存 Neovim 文件树
-- 提供 MOS 插件页面：状态、配置路径、data_dir、创建默认 `init.lua`
+- `/boot` 只存 `.deb`、`settings.json` 和 `packages`，不存 Neovim 配置/数据
+- 配置和数据默认持久化到 `/mnt` 的 pool
+- state/cache 放在 `/run/neovim`（RAM）
+- 提供 MOS 插件页面：状态、pool 路径、配置/数据目录、创建默认 `init.lua`
 
-编辑器更新通过新的插件 Release（和 `mos-vim` 一样），页面不再单独下载 Neovim。
+编辑器更新通过新的插件 Release（和 `mos-vim` 一样），页面不单独下载 Neovim。
 
 ---
 
@@ -26,8 +28,12 @@
 mos-neovim/
 ├── functions
 ├── settings.json
+├── neovim-env                     # 共享路径解析
 ├── neovim-backend                 # /usr/bin/plugins/neovim
 ├── neovim-wrapper                 # /usr/bin/nvim
+├── debian/
+│   ├── postinst
+│   └── postrm
 ├── images/
 │   └── neovim.png
 ├── page/                          # Vue 插件页面
@@ -37,26 +43,61 @@ mos-neovim/
 
 ---
 
+## 持久化位置
+
+配置和数据不再放 `/boot`，默认自动选择：
+
+```text
+/mnt/cache/appdata/neovim/config
+/mnt/cache/appdata/neovim/data
+```
+
+如果没有 `/mnt/cache`，会依次尝试：
+
+```text
+/mnt/user/appdata/neovim
+/mnt/disk*/appdata/neovim
+```
+
+如果都没有检测到可写 pool，才退回 `/run/neovim`（RAM），页面会显示警告。
+
+- 配置根：`.../neovim/config`，`init.lua` 在 `.../config/nvim/init.lua`
+- 数据根：`.../neovim/data`
+- state：`/run/neovim/state`（RAM，命令历史/undo 会丢）
+- cache：`/run/neovim/cache`（RAM）
+
+`config`、`data`、`state`、`cache` 是四个独立的 XDG 根，不会互相覆盖。
+
+### 旧版本迁移
+
+从 0.2.0 升级时：
+
+- `/boot/optional/plugins/neovim/config` 会复制到新的 pool 配置根
+- `/boot/optional/plugins/neovim/data` 会复制到新的 pool 数据根
+- 旧文件不会删除，确认新位置正常后可以手动清理
+
+---
+
 ## 构建
 
 本地（当前架构）：
 
 ```bash
-./build.sh 0.2.0
+./build.sh 0.2.1
 ```
 
 输出：
 
 ```text
-build/neovim-0.2.0-1+mos-plugin_amd64.deb
-build/neovim-0.2.0-1+mos-plugin_amd64.deb.md5
+build/neovim-0.2.1-1+mos-plugin_amd64.deb
+build/neovim-0.2.1-1+mos-plugin_amd64.deb.md5
 ```
 
 GitHub Actions 会同时构建：
 
 ```text
-neovim-0.2.0-1+mos-plugin_amd64.deb
-neovim-0.2.0-1+mos-plugin_arm64.deb
+neovim-0.2.1-1+mos-plugin_amd64.deb
+neovim-0.2.1-1+mos-plugin_arm64.deb
 ```
 
 Hub 会根据机器架构选择对应的 `.deb`。
@@ -66,8 +107,8 @@ Hub 会根据机器架构选择对应的 `.deb`。
 ## 发布与安装
 
 ```bash
-git tag 0.2.0
-git push origin 0.2.0
+git tag 0.2.1
+git push origin 0.2.1
 ```
 
 在 MOS 添加索引仓库：
@@ -82,37 +123,9 @@ Refresh 后到 **Docker → MOS Hub → Plugins** 安装 **Neovim**。
 
 - `/usr/lib/neovim`：Neovim release 树
 - `/usr/bin/nvim`：包装脚本
-- 配置：`/boot/optional/plugins/neovim/config/nvim/init.lua`
-- data：默认 `/run/neovim/data`（RAM），可设置 `data_dir` 持久化
-- state/cache：默认 `/run/neovim`（RAM）
-
----
-
-## 持久化
-
-Hub 安装器会把 `.deb` 和 `functions` 放到：
-
-```text
-/boot/optional/plugins/neovim/<version>/
-```
-
-启动时 `installplugins-mos` 重新安装该 `.deb`，恢复 `/usr/lib/neovim` 和
-`/usr/bin/nvim`。
-
-- `/boot` 只放 `.deb` 和配置/数据，不放假 Neovim 树
-- 配置持久化在 `/boot/optional/plugins/neovim/config`
-- `data_dir` 留空时 data/cache 在 `/run/neovim`（RAM）
-- 设置 `data_dir`（建议 pool appdata）后 data/cache 持久化
-- state 始终在 `/run/neovim/state`（RAM，命令历史/undo 会丢）
-
-`config`、`data`、`state`、`cache` 是四个独立的 XDG 根，不会互相覆盖。
-但 `data_dir` 必须是绝对路径，且不能指向插件根目录/release 树/config；
-页面和后端会拒绝。
-
-### config 与 data 的依赖
-
-如果 `init.lua` 持久化、插件在 RAM 的 data 里，重启后插件会消失。
-插件型配置请设置持久 `data_dir`；空值适合不依赖外部插件的配置。
+- 配置：`/mnt/cache/appdata/neovim/config/nvim/init.lua`（自动检测）
+- data：`/mnt/cache/appdata/neovim/data`（自动检测）
+- state/cache：`/run/neovim`（RAM）
 
 ---
 
@@ -120,7 +133,11 @@ Hub 安装器会把 `.deb` 和 `functions` 放到：
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `data_dir` | `""` | 留空则 data/cache 在 `/run/neovim`（RAM）；填了则持久化到该路径 |
+| `config_dir` | `""` | 留空使用自动检测的 pool 路径；填了用该绝对路径作为 XDG 配置根 |
+| `data_dir` | `""` | 留空使用自动检测的 pool 路径；填 `/run/neovim/data` 可显式改回 RAM |
+
+页面会显示实际的 `config_root`、`data_root` 和 Persistent/RAM 状态。
+路径必须是绝对路径，不能指向 `/boot`、插件目录、release 树或 state/cache。
 
 ---
 
@@ -130,8 +147,8 @@ Hub 安装器会把 `.deb` 和 `functions` 放到：
 编辑器版本随 `.deb` 更新。
 
 **卸载**：卸载插件会移除 `/usr/lib/neovim` 和 `/usr/bin/nvim`；
-`/boot/optional/plugins/neovim` 里的配置和设置会保留。
-如果设置过 `data_dir`，那份数据在 pool 上，不会自动删除。
+pool 上的配置和数据不会删除。`/boot/optional/plugins/neovim/settings.json`
+也会保留。
 
 ---
 
@@ -144,6 +161,13 @@ ls -la /usr/lib/neovim/bin/nvim
 ```
 
 `nvim: command not found` 时重新安装 Neovim 插件，让 MOS 重新安装 `.deb`。
+
+页面显示 Storage 为 RAM 时：
+
+1. 确认 `/mnt/cache` 或 `/mnt/user` 已经挂载
+2. 在页面点 **Use pool defaults**，保存
+3. 或手动填入 `/mnt/cache/appdata/neovim/config` 和
+   `/mnt/cache/appdata/neovim/data`
 
 ---
 

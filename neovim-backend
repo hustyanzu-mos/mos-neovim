@@ -1,37 +1,30 @@
 #!/bin/bash
 # Neovim backend for MOS.
 # The Neovim release tree is installed by the plugin .deb at /usr/lib/neovim.
-# This backend only reports status and creates a starter init.lua.
+# Config and data live on a mounted pool; state and cache live in RAM.
 
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 umask 022
 
-PLG_DIR="${NEOVIM_PLUGIN_DIR:-/boot/optional/plugins/neovim}"
-SETTINGS="$PLG_DIR/settings.json"
-USR_LIB_DIR="${NEOVIM_USR_LIB_DIR:-/usr/lib/neovim}"
-RAM_DIR="${NEOVIM_RAM_DIR:-/run/neovim}"
-SHARE_DIR="${NEOVIM_SHARE_DIR:-/usr/share/neovim-plugin}"
+. "${NEOVIM_ENV:-/usr/share/neovim-plugin/neovim-env}"
 
-export XDG_CONFIG_HOME="$PLG_DIR/config"
-export XDG_STATE_HOME="$RAM_DIR/state"
-export XDG_DATA_HOME="$RAM_DIR/data"
-export XDG_CACHE_HOME="$RAM_DIR/cache"
-
-mkdir -p "$PLG_DIR" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" 2>/dev/null
+SETTINGS="$NEOVIM_SETTINGS"
+SHARE_DIR="$NEOVIM_SHARE_DIR"
 
 say() { echo "$*"; }
 
 write_default_settings() {
   cat > "$SETTINGS" <<'JSON'
 {
+  "config_dir": "",
   "data_dir": ""
 }
 JSON
 }
 
 ensure_settings() {
-  mkdir -p "$PLG_DIR"
-  if [ -f "$SETTINGS" ] && ! jq empty "$SETTINGS" >/dev/null 2>&1; then
+  mkdir -p "$NEOVIM_PLUGIN_DIR"
+  if command -v jq >/dev/null 2>&1 && [ -f "$SETTINGS" ] && ! jq empty "$SETTINGS" >/dev/null 2>&1; then
     cp -f "$SETTINGS" "$SETTINGS.bak.$(date +%s)" 2>/dev/null || true
     rm -f "$SETTINGS"
   fi
@@ -44,44 +37,44 @@ ensure_settings() {
   fi
 }
 
-setting() {
-  jq -r --arg k "$1" '.[$k] // empty' "$SETTINGS" 2>/dev/null
+current_version() {
+  if [ -x "$NEOVIM_USR_LIB_DIR/bin/nvim" ]; then
+    "$NEOVIM_USR_LIB_DIR/bin/nvim" --version 2>/dev/null | head -n1 | awk '{print $2}' | sed 's/^v//'
+  fi
 }
 
-current_version() {
-  if [ -x "$USR_LIB_DIR/bin/nvim" ]; then
-    "$USR_LIB_DIR/bin/nvim" --version 2>/dev/null | head -n1 | awk '{print $2}' | sed 's/^v//'
-  fi
+cmd_prepare() {
+  neovim_prepare
+  return 0
 }
 
 cmd_status() {
-  local installed=false version config data data_mode config_exists=false
-  config="$XDG_CONFIG_HOME/nvim/init.lua"
-  if [ -f "$config" ] || [ -f "$XDG_CONFIG_HOME/nvim/init.vim" ]; then
+  local installed=false version config_exists=false
+
+  neovim_prepare
+
+  if [ -f "$NEOVIM_CONFIG_ROOT/nvim/init.lua" ] || [ -f "$NEOVIM_CONFIG_ROOT/nvim/init.vim" ]; then
     config_exists=true
   fi
 
-  data="$(setting data_dir)"
-  if [ -n "$data" ]; then
-    data_mode="persistent"
-  else
-    data="$RAM_DIR/data"
-    data_mode="memory"
-  fi
-
-  if [ -x "$USR_LIB_DIR/bin/nvim" ]; then
+  if [ -x "$NEOVIM_USR_LIB_DIR/bin/nvim" ]; then
     installed=true
   fi
 
   version="$(current_version)"
   [ -n "$version" ] || version="not installed"
 
-  printf '{"installed":%s,"version":"%s","config":"%s","data":"%s","data_mode":"%s","config_exists":%s,"runtime":"%s","plugin_dir":"%s","release":"%s","config_root":"%s","state_root":"%s","command":"nvim"}\n' \
-    "$installed" "$version" "$config" "$data" "$data_mode" "$config_exists" "$USR_LIB_DIR/share/nvim/runtime" "$PLG_DIR" "$USR_LIB_DIR" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
+  printf '{"installed":%s,"version":"%s","config":"%s","config_root":"%s","data":"%s","data_root":"%s","data_mode":"%s","config_mode":"%s","storage_mode":"%s","pool_root":"%s","config_exists":%s,"runtime":"%s","plugin_dir":"%s","release":"%s","state_root":"%s","cache_root":"%s","command":"nvim"}\n' \
+    "$installed" "$version" "$NEOVIM_CONFIG_ROOT/nvim/init.lua" "$NEOVIM_CONFIG_ROOT" \
+    "$NEOVIM_DATA_ROOT" "$NEOVIM_DATA_ROOT" "$NEOVIM_DATA_MODE" "$NEOVIM_CONFIG_MODE" \
+    "$NEOVIM_STORAGE_MODE" "$NEOVIM_POOL_ROOT" "$config_exists" \
+    "$NEOVIM_USR_LIB_DIR/share/nvim/runtime" "$NEOVIM_PLUGIN_DIR" "$NEOVIM_USR_LIB_DIR" \
+    "$NEOVIM_STATE_ROOT" "$NEOVIM_CACHE_ROOT"
 }
 
 cmd_init_config() {
-  local dir="$XDG_CONFIG_HOME/nvim" file
+  neovim_prepare
+  local dir="$NEOVIM_CONFIG_ROOT/nvim" file
   file="$dir/init.lua"
   mkdir -p "$dir"
   if [ -f "$file" ]; then
@@ -90,7 +83,7 @@ cmd_init_config() {
   fi
   cat > "$file" <<'LUA'
 -- Neovim configuration for MOS
--- This file lives under /boot/optional/plugins/neovim/config/nvim
+-- This file lives on the MOS pool and survives reboots.
 vim.opt.number = true
 vim.opt.relativenumber = true
 vim.opt.termguicolors = true
@@ -103,7 +96,7 @@ LUA
 
 cmd_uninstall() {
   rm -f /usr/bin/plugins/neovim 2>/dev/null || true
-  say "Removed Neovim plugin entry. Config kept in $PLG_DIR"
+  say "Removed Neovim plugin entry. Config and data kept on the pool."
 }
 
 ensure_settings
@@ -111,10 +104,11 @@ ensure_settings
 case "${1:-}" in
   status) cmd_status ;;
   init_config) cmd_init_config ;;
+  prepare) cmd_prepare ;;
   version) current_version ;;
   uninstall) cmd_uninstall ;;
   *)
-    echo "Usage: $0 {status|init_config|version|uninstall}" >&2
+    echo "Usage: $0 {status|init_config|prepare|version|uninstall}" >&2
     exit 2
     ;;
 esac

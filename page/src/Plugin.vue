@@ -9,21 +9,12 @@
         {{ error }}
       </v-alert>
 
-      <v-alert
-        v-if="status.config_exists && status.data_mode === 'memory'"
-        type="warning"
-        variant="tonal"
-        class="mb-4"
-      >
-        <div class="font-weight-medium">Persistent config with RAM data</div>
+      <v-alert v-if="status.storage_mode === 'memory'" type="warning" variant="tonal" class="mb-4">
+        <div class="font-weight-medium">Using RAM instead of a pool</div>
         <div class="text-body-2 mt-1">
-          init.lua is persistent, but plugins installed under data are in RAM and will be lost on reboot.
-          If init.lua loads external plugins, set a persistent data directory. A pool path such as
-          /mnt/cache/appdata/neovim is recommended.
+          No writable pool was detected, or the configured path is under /run. Config and data will be lost on reboot.
+          Set a pool path such as /mnt/cache/appdata/neovim below.
         </div>
-        <v-btn size="small" variant="tonal" class="mt-2" @click="usePersistentData">
-          Use persistent data
-        </v-btn>
       </v-alert>
 
       <v-card class="mb-4 pa-0">
@@ -37,17 +28,27 @@
         </v-card-title>
         <v-card-text>
           <v-row>
-            <v-col cols="12" md="4">
-              <div class="text-caption text-medium-emphasis">Installed</div>
+            <v-col cols="12" md="3">
+              <div class="text-caption text-medium-emphasis">Version</div>
               <div class="text-subtitle-1 font-weight-medium">{{ status.version || 'Not installed' }}</div>
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="3">
               <div class="text-caption text-medium-emphasis">Command</div>
               <div class="text-subtitle-1 font-weight-medium"><code>nvim</code></div>
             </v-col>
-            <v-col cols="12" md="4">
-              <div class="text-caption text-medium-emphasis">Runtime</div>
-              <div class="text-caption">{{ status.runtime || '-' }}</div>
+            <v-col cols="12" md="3">
+              <div class="text-caption text-medium-emphasis">Storage</div>
+              <v-chip
+                size="small"
+                :color="status.storage_mode === 'persistent' ? 'success' : 'warning'"
+                variant="tonal"
+              >
+                {{ status.storage_mode === 'persistent' ? 'Pool' : 'RAM' }}
+              </v-chip>
+            </v-col>
+            <v-col cols="12" md="3">
+              <div class="text-caption text-medium-emphasis">Pool</div>
+              <div class="text-body-2">{{ status.pool_root || 'Not detected' }}</div>
             </v-col>
           </v-row>
           <div class="d-flex flex-wrap ga-2 mt-4">
@@ -65,41 +66,75 @@
           <span>Configuration</span>
         </v-card-title>
         <v-card-text>
+          <v-text-field
+            v-model="form.config_dir"
+            label="Config directory"
+            hint="Empty uses the auto-detected pool path. This is the XDG root that contains nvim/init.lua."
+            persistent-hint
+            density="compact"
+            variant="outlined"
+            class="mb-4"
+          />
+          <v-text-field
+            v-model="form.data_dir"
+            label="Data directory"
+            hint="Empty uses the auto-detected pool path. Use /run/neovim/data only if you explicitly want RAM."
+            persistent-hint
+            density="compact"
+            variant="outlined"
+            class="mb-4"
+          />
+
+          <v-row class="mb-2">
+            <v-col cols="12" md="6">
+              <div class="text-caption text-medium-emphasis">Current config root</div>
+              <div class="text-body-2">{{ status.config_root || '-' }}</div>
+              <v-chip
+                size="x-small"
+                :color="status.config_mode === 'persistent' ? 'success' : 'warning'"
+                variant="tonal"
+                class="mt-1"
+              >
+                {{ status.config_mode === 'persistent' ? 'Persistent' : 'RAM' }}
+              </v-chip>
+            </v-col>
+            <v-col cols="12" md="6">
+              <div class="text-caption text-medium-emphasis">Current data root</div>
+              <div class="text-body-2">{{ status.data_root || '-' }}</div>
+              <v-chip
+                size="x-small"
+                :color="status.data_mode === 'persistent' ? 'success' : 'warning'"
+                variant="tonal"
+                class="mt-1"
+              >
+                {{ status.data_mode === 'persistent' ? 'Persistent' : 'RAM' }}
+              </v-chip>
+            </v-col>
+          </v-row>
+
+          <p class="text-body-2 text-medium-emphasis mt-2">
+            State and cache stay in <code>/run/neovim</code> and are cleared on reboot.
+            Config and data are kept on the pool and are not removed by plugin uninstall.
+          </p>
+
+          <div class="d-flex flex-wrap ga-2 mt-4">
+            <v-btn size="small" color="primary" :loading="saving" @click="saveSettings">
+              <v-icon start>mdi-content-save</v-icon>
+              Save settings
+            </v-btn>
+            <v-btn size="small" variant="text" @click="usePoolDefaults">Use pool defaults</v-btn>
+            <v-btn size="small" variant="text" @click="useRamData">Use RAM for data</v-btn>
+          </div>
+
+          <v-divider class="my-4" />
+
           <v-text-field :model-value="status.config" label="init.lua" readonly density="compact" variant="outlined" hide-details>
             <template #append-inner>
               <v-btn icon="mdi-content-copy" size="small" variant="text" @click="copy(status.config)" />
             </template>
           </v-text-field>
-          <p class="text-body-2 text-medium-emphasis mt-3">
-            The config directory is persistent. Edit <code>init.lua</code> through SSH or the MOS Filebrowser.
-            Plugins and undo history also live under the plugin directory.
-          </p>
           <v-btn size="small" variant="tonal" class="mt-3" :loading="creatingConfig" @click="createConfig">
             Create default init.lua
-          </v-btn>
-
-          <v-divider class="my-4" />
-
-          <v-text-field
-            v-model="form.data_dir"
-            label="Data directory (optional)"
-            hint="Empty uses RAM (/run/neovim) and is cleared on reboot. Set an absolute pool path such as /mnt/cache/appdata/neovim to persist it."
-            persistent-hint
-          />
-          <p class="text-caption text-medium-emphasis mt-2">
-            Current data: {{ status.data || '-' }}
-            <v-chip
-              size="small"
-              :color="status.data_mode === 'persistent' ? 'success' : 'info'"
-              variant="tonal"
-              class="ml-2"
-            >
-              {{ status.data_mode === 'persistent' ? 'Persistent' : 'Memory' }}
-            </v-chip>
-          </p>
-          <v-btn size="small" color="primary" class="mt-4" :loading="saving" @click="saveSettings">
-            <v-icon start>mdi-content-save</v-icon>
-            Save settings
           </v-btn>
         </v-card-text>
       </v-card>
@@ -113,7 +148,7 @@
 import { ref, reactive, onMounted } from 'vue';
 
 const PLUGIN_NAME = 'neovim';
-const DEFAULT_SETTINGS = { data_dir: '' };
+const DEFAULT_SETTINGS = { config_dir: '', data_dir: '' };
 
 const loading = ref(true);
 const saving = ref(false);
@@ -124,19 +159,24 @@ const snackbarText = ref('');
 const snackbarColor = ref('success');
 
 const settings = reactive({ ...DEFAULT_SETTINGS });
-const form = reactive({ data_dir: '' });
+const form = reactive({ config_dir: '', data_dir: '' });
 const status = reactive({
   installed: false,
   version: '',
   config: '',
+  config_root: '',
   data: '',
+  data_root: '',
   data_mode: 'memory',
+  config_mode: 'memory',
+  storage_mode: 'memory',
+  pool_root: '',
   config_exists: false,
   runtime: '',
   plugin_dir: '',
   release: '',
-  config_root: '',
   state_root: '',
+  cache_root: '',
   command: 'nvim',
 });
 
@@ -182,6 +222,7 @@ async function fetchSettings() {
   for (const key of Object.keys(DEFAULT_SETTINGS)) {
     if (data[key] !== undefined && data[key] !== null) settings[key] = data[key];
   }
+  form.config_dir = settings.config_dir || '';
   form.data_dir = settings.data_dir || '';
 }
 
@@ -191,14 +232,19 @@ async function refreshStatus() {
   status.installed = out.installed === true;
   status.version = out.version || '';
   status.config = out.config || '';
+  status.config_root = out.config_root || '';
   status.data = out.data || '';
+  status.data_root = out.data_root || '';
   status.data_mode = out.data_mode || 'memory';
+  status.config_mode = out.config_mode || 'memory';
+  status.storage_mode = out.storage_mode || 'memory';
+  status.pool_root = out.pool_root || '';
   status.config_exists = out.config_exists === true;
   status.runtime = out.runtime || '';
   status.plugin_dir = out.plugin_dir || '';
   status.release = out.release || '';
-  status.config_root = out.config_root || '';
   status.state_root = out.state_root || '';
+  status.cache_root = out.cache_root || '';
   status.command = out.command || 'nvim';
 }
 
@@ -214,37 +260,54 @@ async function refreshAll() {
   }
 }
 
-function usePersistentData() {
-  if (status.plugin_dir) {
-    form.data_dir = `${status.plugin_dir}/data`;
-    notify('Set to the plugin data directory; change it to a pool path if preferred, then Save');
+function usePoolDefaults() {
+  form.config_dir = '';
+  form.data_dir = '';
+  notify('Pool defaults selected; click Save settings');
+}
+
+function useRamData() {
+  form.data_dir = '/run/neovim/data';
+  notify('RAM data selected; click Save settings');
+}
+
+function validatePath(label, value) {
+  if (!value) return;
+  if (!value.startsWith('/')) {
+    throw new Error(`${label} must be an absolute path`);
+  }
+  const reserved = [status.plugin_dir, status.release, status.state_root, status.cache_root]
+    .filter(Boolean);
+  if (reserved.some((p) => value === p || value.startsWith(p + '/'))) {
+    throw new Error(`${label} must be outside the plugin and runtime directories`);
+  }
+  if (value === '/boot' || value.startsWith('/boot/')) {
+    throw new Error(`${label} must be on a pool such as /mnt/cache/appdata/neovim, not /boot`);
+  }
+  if (!value.startsWith('/mnt/') && value !== '/run' && !value.startsWith('/run/') && value !== '/tmp' && !value.startsWith('/tmp/')) {
+    throw new Error(`${label} must be under /mnt, /run, or /tmp`);
   }
 }
 
 async function saveSettings() {
   saving.value = true;
   try {
-    const value = form.data_dir.trim();
-    if (value) {
-      if (!value.startsWith('/')) {
-        throw new Error('Data directory must be an absolute path');
-      }
-      const allowed = status.plugin_dir ? `${status.plugin_dir}/data` : '';
-      const inAllowed = Boolean(allowed) && (value === allowed || value.startsWith(allowed + '/'));
-      if (!inAllowed) {
-        const reserved = [status.plugin_dir, status.release, status.config_root, status.state_root].filter(Boolean);
-        if (reserved.some((p) => value === p || value.startsWith(p + '/'))) {
-          throw new Error('Data directory must be outside the plugin directory; use a pool path such as /mnt/cache/appdata/neovim');
-        }
-      }
+    const configDir = form.config_dir.trim();
+    const dataDir = form.data_dir.trim();
+    validatePath('Config directory', configDir);
+    validatePath('Data directory', dataDir);
+    if (configDir && dataDir && configDir === dataDir) {
+      throw new Error('Config and data directories must be different');
     }
+
     const res = await fetch(`/api/v1/mos/plugins/settings/${PLUGIN_NAME}`, {
       method: 'POST',
       headers: jsonHeaders(),
-      body: JSON.stringify({ data_dir: value }),
+      body: JSON.stringify({ config_dir: configDir, data_dir: dataDir }),
     });
     if (!res.ok) throw new Error(`Save failed: HTTP ${res.status}`);
-    settings.data_dir = value;
+    settings.config_dir = configDir;
+    settings.data_dir = dataDir;
     await refreshStatus();
     notify('Settings saved');
   } catch (e) {
