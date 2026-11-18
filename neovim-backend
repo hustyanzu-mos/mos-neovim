@@ -22,8 +22,8 @@ SHARE_DIR="${NEOVIM_SHARE_DIR:-/usr/share/neovim-plugin}"
 GH_REPO="neovim/neovim"
 
 export XDG_CONFIG_HOME="$PLG_DIR/config"
-export XDG_STATE_HOME="$PLG_DIR/state"
 RAM_DIR="${NEOVIM_RAM_DIR:-/run/neovim}"
+export XDG_STATE_HOME="$RAM_DIR/state"
 export XDG_DATA_HOME="$RAM_DIR/data"
 export XDG_CACHE_HOME="$RAM_DIR/cache"
 

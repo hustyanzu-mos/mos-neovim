@@ -10,7 +10,7 @@ _setting() {
 }
 
 _restore() {
-  mkdir -p "$PLG_DIR/config" "$PLG_DIR/data" "$PLG_DIR/state" "$PLG_DIR/cache"
+  mkdir -p "$PLG_DIR/config" "$PLG_DIR/data"
 
   for f in neovim-backend neovim-wrapper functions; do
     if [ ! -f "$PLG_DIR/$f" ] && [ -f "$SHARE_DIR/$f" ]; then

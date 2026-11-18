@@ -20,7 +20,7 @@ if [ ! -x "$NVIM" ]; then
 fi
 
 export XDG_CONFIG_HOME="$PLG_DIR/config"
-export XDG_STATE_HOME="$PLG_DIR/state"
+export XDG_STATE_HOME="${NEOVIM_RAM_DIR:-/run/neovim}/state"
 export VIMRUNTIME
 
 RAM_DIR="${NEOVIM_RAM_DIR:-/run/neovim}"

@@ -87,7 +87,7 @@ jobs:
           set -e
           PLG=/boot/optional/plugins/neovim
           SHARE=/usr/share/neovim-plugin
-          mkdir -p "$PLG/config" "$PLG/data" "$PLG/state" "$PLG/cache"
+          mkdir -p "$PLG/config" "$PLG/data"
           chmod 0755 /usr/bin/plugins/neovim /usr/bin/nvim 2>/dev/null || true
           for f in neovim-backend neovim-wrapper functions; do
             cp -f "$SHARE/$f" "$PLG/$f"
